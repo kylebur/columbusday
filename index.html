@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Columbus Day - The RPG</title>
+<style>
+  body { margin: 0; overflow: hidden; background-color: #333; display: flex; justify-content: center; align-items: center; height: 100vh; color: #fff; font-family: sans-serif;}
+  canvas { border: 1px solid white; background-color: #000; }
+  #game-container { text-align: center; }
+  #instructions-container { margin-top: 10px; font-size: 0.9em; color: #ccc; max-width: 800px; }
+  #objective { font-weight: bold; margin-bottom: 5px; color: lime; }
+  #message { min-height: 1.2em; color: yellow;} /* Reserve space for messages */
+</style>
+</head>
+<body>
+  <div id="game-container">
+    <h1>Columbus Day - The RPG</h1>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div id="instructions-container">
+      Use Arrow Keys to move Joe Bishop. Press [E] to interact.
+      <br>
+      <div id="objective">Objective: Get to your truck.</div>
+      <div id="message"></div>
+    </div>
+  </div>
+
+<script>
+  // --- DOM Elements ---
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const objectiveDiv = document.getElementById('objective');
+  const messageDiv = document.getElementById('message');
+
+  // --- Error Handling ---
+  if (!canvas || !ctx || !objectiveDiv || !messageDiv) {
+      console.error("FATAL: Could not find essential DOM elements (canvas, objective, message).");
+      alert("Error initializing game elements. Check the console (F12).");
+  }
+
+  // --- Game Settings ---
+  const PLAYER_SIZE = 20;
+  const PLAYER_SPEED = 4;
+  const INTERACT_DISTANCE = 60; // Keep increased distance for now
+  const LABEL_OFFSET_Y = -8;
+  const LABEL_FONT_SIZE = 10;
+
+  // --- Game State ---
+  let currentLevel = 'home';
+  let objectives = {
+    // Chapter 1: Columbus Day
+    getInTruck: false, seeCrash: false, reachTownBlocked: false, findDynamite: false, getDynamite: false,
+    enteredFireRoad: false, // Replaces usedGateDynamite
+    captureRuhar: false, reachBarn: false, stashedRuhar: false, chapter1Complete: false,
+    // Chapter 2: Deployment
+    goToEcuador: false, rideElevator: false, boardTransport: false, chapter2Complete: false,
+    // Chapter 3: Camp Alpha
+    reachCampAlpha: false, getWeaponM4B1: false, useZinger: false, chapter3Complete: false,
+    // Chapter 4: Paradise
+    reachParadise: false, setupEOT: false, chapter4Complete: false,
+    // Chapter 5: Intel
+    meetGovernor: false, learnTruth: false, chapter5Complete: false,
+    // Chapter 8: Planting Potatoes
+    plantPotatoes: false, chapter8Complete: false,
+    // Chapter 9: Jail
+    getArrested: false, inKristangJail: false, chapter9Complete: false,
+     // Chapter 10: Skippy
+    hearExplosion: false, escapeJail: false, findSkippy: false, talkToSkippy: false, escapeWithSkippy: false, chapter10Complete: false,
+  };
+
+  let player = {
+    x: canvas.width / 2 - PLAYER_SIZE / 2,
+    y: canvas.height - PLAYER_SIZE * 2 - 5, // Adjusted starting position
+    width: PLAYER_SIZE,
+    height: PLAYER_SIZE,
+    color: 'blue',
+    label: 'Joe Bishop',
+    inventory: { dynamite: false, m4b1: false, zinger: false, skippy: false }
+  };
+
+  let keys = {}; // Object to store the state of keys (pressed or not)
+
+  // --- Game Objects Definition ---
+  // Added default width/height to prevent errors if missed
+  const DEFAULT_W = 50;
+  const DEFAULT_H = 50;
+  let levels = {
+    // --- CHAPTER 1 ---
+    home: {
+      name: "Joe's Parents' House Area",
+      objects: [
+        { id: 'house', x: 300, y: 400, width: 200, height: 150, color: 'saddlebrown', label: "Parents' House", type: 'building' }, // House ends at y=550
+        { id: 'truck', x: 600, y: 500, width: 60, height: 30, color: 'darkred', label: "Pickup Truck", type: 'vehicle', interactable: true, interactionMessage: "[E] Get in Truck", setsObjective: 'getInTruck', targetLevel: 'roadToTown' }
+      ],
+      entryPoint: { x: canvas.width / 2 - PLAYER_SIZE / 2, y: canvas.height - PLAYER_SIZE * 2 - 5 } // Match player start
+    },
+    roadToTown: {
+        name: "Road near Thompson Corners",
+        objects: [
+           { id: 'crashedTransport', x: 100, y: 100, width: 100, height: 40, color: 'dimgrey', label: "Crashed Ruhar Transport (Smoking)", type: 'scenery', visible: false }, // Start invisible
+           { id: 'blockedBridge', x: canvas.width / 2 - 50, y: 50, width: 100, height: 20, color: 'darkgrey', label: "Destroyed Bridge", type: 'obstacle' },
+           { id: 'traffic', x: canvas.width / 2 - 150, y: 80, width: 300, height: 40, color: 'yellow', label: "Blocked Traffic", type: 'obstacle', interactable: true, interactionMessage: "Road blocked. Need another way.", setsObjective: 'reachTownBlocked'},
+           { id: 'quarrySign', x: 700, y: 200, width: 80, height: 20, color: 'grey', label: "Quarry ->", type: 'transition', targetLevel: 'quarry', interactable: true, interactionMessage:"[E] Go to Quarry", setsObjective: 'findDynamite'},
+           { id: 'fireRoadEntry', x: 700, y: 400, width: 50, height: 100, color: 'darkgreen', label: "Fire Road Entrance", type: 'transition', targetLevel: 'fireRoad', interactable: true,
+             interactionMessage: "[E] Enter Fire Road",
+             setsObjective: 'enteredFireRoad',
+             unlocks: 'thompsonCorners'
+           }
+        ],
+        entryPoint: { x: canvas.width / 2 - PLAYER_SIZE / 2, y: canvas.height - PLAYER_SIZE * 3 } // Entry point when coming *back*
+    },
+     quarry: {
+        name: "Quarry Area",
+        objects: [
+            { id: 'shed', x: 300, y: 200, width: 100, height: 80, color: 'grey', label: "Storage Shed", type: 'building'},
+            { id: 'dynamite', x: 350, y: 240, width: 20, height: 10, color: 'red', label: "Dynamite", type: 'item', interactable: true, interactionMessage: "[E] Take Dynamite", setsObjective: 'getDynamite', pickupItem: 'dynamite'},
+            { id: 'roadExit', x: canvas.width / 2, y: canvas.height - 50, width: 100, height: 20, color: 'grey', label: "Back to Road", type: 'transition', targetLevel: 'roadToTown', interactable: true}
+        ],
+        entryPoint: { x: canvas.width / 2, y: 50}
+     },
+     fireRoad: {
+         name: "Fire Road",
+         objects: [
+             { id: 'brokenGate', x: canvas.width / 2, y: canvas.height - 80, width: 80, height: 10, color: 'grey', label: "Old Gate", type: 'scenery'}, // Changed label slightly
+             { id: 'townEntrance', x: canvas.width / 2 - 25, y: 50, width: 50, height: 50, color: 'darkgreen', label: "To Thompson Corners", type: 'transition', targetLevel: 'thompsonCorners', interactable: true }
+         ],
+         entryPoint: { x: canvas.width / 2, y: canvas.height - 50}
+     },
+     thompsonCorners: {
+         name: "Thompson Corners Center",
+         objects: [
+             { id: 'school', x: 100, y: 100, width: 150, height: 100, color: 'tan', label: "Elementary School", type: 'building' },
+             { id: 'ruharTransportLanded', x: 125, y: 125, width: 80, height: 35, color: 'darkgrey', label: "Ruhar Transport", type: 'scenery' },
+             { id: 'potatoWarehouse', x: 600, y: 100, width: 100, height: 80, color: 'orange', label: "Burning Warehouse", type: 'scenery' },
+             { id: 'diner', x: 300, y: 300, width: 100, height: 80, color: 'lightblue', label: "Diner", type: 'building'}, // Ends y=380
+             { id: 'hardwareStore', x: 300, y: 410, width: 100, height: 80, color: 'grey', label: "Hardware Store", type: 'building'}, // Starts y=410 (Gap created)
+             { id: 'dinerAlley', x: 340, y: 390, width: 20, height: 20, color: 'yellow', label: "Trap Spot", type: 'interactionPoint', interactable: true, requiresItem: 'dynamite', interactionMessage: "[E] Set Dynamite Trap", setsObjective: 'captureRuhar', targetLevel: 'tomPaulsonsBarn'}, // Centered in gap y=[380, 410]
+             { id: 'ruharPatrol1', x: 400, y: 200, width: 15, height: 15, color: 'gold', label: "Ruhar", type: 'npc' },
+             { id: 'ruharPatrol2', x: 450, y: 400, width: 15, height: 15, color: 'gold', label: "Ruhar", type: 'npc' }
+         ],
+         entryPoint: { x: canvas.width / 2, y: 50}
+     },
+     tomPaulsonsBarn: {
+         name: "Tom Paulson's Barn",
+          objects: [
+             { id: 'barn', x: 100, y: 100, width: 300, height: 200, color: 'darkred', label: "Barn", type: 'building'},
+             { id: 'iceCreamTruckParked', x: 150, y: 150, width: 60, height: 30, color: 'purple', label: "Ice Cream Truck", type: 'vehicle', interactable: false },
+             { id: 'rootCellar', x: 450, y: 250, width: 50, height: 50, color: 'grey', label: "Root Cellar", type: 'interactionPoint', interactable: true, requiredObjective: 'captureRuhar', interactionMessage: "[E] Stash captured Ruhar here.", setsObjective: 'stashedRuhar', unlocks: 'chapter1Complete'},
+             { id: 'exitToDeployment', x: canvas.width - 80, y: canvas.height - 80, width: 60, height: 60, color: 'blue', label: "Leave Area", type: 'transition', targetLevel: 'ecuador', interactable: true, requiredObjective: 'chapter1Complete', interactionMessage: "[E] Time to Deploy (Ch. 2)", setsObjective:'goToEcuador'}
+          ],
+          entryPoint: { x: canvas.width / 2, y: canvas.height - 50}
+     },
+     // --- CHAPTER 2: Deployment ---
+     ecuador: {
+        name: "Ecuador Staging Area",
+        objects: [
+            { id: 'tentCity', x: 50, y: 50, width: 400, height: 300, color: 'tan', label: "Tent City", type: 'scenery'},
+            { id: 'mountain', x: 500, y: 50, width: 250, height: 500, color: 'darkgrey', label: "Mountain", type: 'scenery'}, // Now non-blocking
+            { id: 'elevatorBeam', x: 615, y: 0, width: 20, height: 600, color: 'cyan', label: "Space Elevator Beam", type: 'scenery'},// Now non-blocking
+            { id: 'elevatorBase', x: 550, y: 450, width: 150, height: 100, color: 'grey', label: "Elevator Base", type: 'transition', targetLevel: 'spaceElevatorCar', interactable: true,
+              interactionMessage: "[E] Board Space Elevator",
+              requiredObjective: 'goToEcuador', // RESTORED: Must have objective from Ch 1 end
+              setsObjective: 'rideElevator'
+            }
+        ],
+        entryPoint: { x: 100, y: canvas.height - 50 }
+     },
+     spaceElevatorCar: {
+        name: "Space Elevator Car",
+        objects: [
+            { id: 'viewport', x: 100, y: 100, width: 100, height: 100, color: 'lightblue', label: "Viewport (View Earth)", type: 'scenery', interactable: true, interactionMessage: "Earth looks peaceful from here..."},
+            { id: 'seats', x: 300, y: 100, width: 400, height: 400, color: 'grey', label: "Passenger Seating", type: 'scenery'},
+            { id: 'exitToStation', x: canvas.width - 80, y: canvas.height / 2 - 30, width: 60, height: 60, color: 'blue', label: "Exit to Station", type: 'transition', targetLevel: 'orbitalStation', interactable: true, interactionMessage: "[E] Arrive at Orbital Station"}
+        ],
+        entryPoint: { x: 50, y: canvas.height / 2 }
+     },
+     orbitalStation: {
+        name: "Orbital Station",
+        objects: [
+            { id: 'stationCorridor', x: 0, y: 250, width: canvas.width, height: 100, color: 'darkgrey', label: "Station Corridor", type: 'scenery'},
+            { id: 'kristangTransportDock', x: canvas.width - 150, y: 200, width: 100, height: 200, color: 'darkgreen', label: "Kristang Transport", type: 'transition', targetLevel: 'kristangShip', interactable: true, interactionMessage: "[E] Board Kristang Transport", setsObjective: 'boardTransport', unlocks: 'chapter2Complete'}
+        ],
+        entryPoint: { x: 50, y: 300 }
+     },
+      // --- CHAPTER 3: Camp Alpha ---
+     kristangShip: { // Simplified representation
+        name: "Kristang Transport Ship (Zero G!)",
+        objects: [
+             { id: 'bunks', x: 100, y: 100, width: 600, height: 400, color: 'darkolivegreen', label: "Bunk Area", type: 'scenery'},
+             { id: 'exitToCampAlpha', x: canvas.width / 2 - 30, y: canvas.height - 80, width: 60, height: 60, color: 'blue', label: "Exit to Camp Alpha", type: 'transition', targetLevel: 'campAlpha', interactable: true, requiredObjective: 'chapter2Complete', interactionMessage: "[E] Arrive at Camp Alpha (Ch. 3)", setsObjective:'reachCampAlpha'}
+        ],
+        entryPoint: { x: canvas.width / 2, y: 50 }
+     },
+     campAlpha: {
+        name: "Camp Alpha Training Base",
+        objects: [
+            { id: 'alphaTents', x: 50, y: 50, width: 500, height: 400, color: 'tan', label: "Tent City", type: 'scenery'},
+            { id: 'shootingRange', x: 600, y: 100, width: 150, height: 100, color: 'grey', label: "Shooting Range", type: 'interactionPoint', interactable: true, interactionMessage: "[E] Get M4B1 Weapon", setsObjective: 'getWeaponM4B1', pickupItem: 'm4b1'},
+            { id: 'missileRange', x: 600, y: 300, width: 150, height: 100, color: 'darkgrey', label: "Missile Range", type: 'interactionPoint', interactable: true, requiredObjective: 'getWeaponM4B1', interactionMessage: "[E] Practice with Zinger", setsObjective: 'useZinger', pickupItem: 'zinger', unlocks: 'chapter3Complete'},
+            { id: 'exitToParadise', x: canvas.width - 80, y: canvas.height - 80, width: 60, height: 60, color: 'blue', label: "Deploy to Paradise", type: 'transition', targetLevel: 'paradiseLanding', interactable: true, requiredObjective: 'chapter3Complete', interactionMessage: "[E] Go to Paradise (Ch. 4)", setsObjective: 'reachParadise'}
+        ],
+        entryPoint: { x: 100, y: canvas.height - 50 }
+     },
+     // --- CHAPTER 4: Paradise ---
+     paradiseLanding: {
+        name: "Paradise - Landing Zone",
+        objects: [
+            { id: 'paradiseElevator', x: canvas.width / 2 - 75, y: 50, width: 150, height: 100, color: 'grey', label: "Paradise Space Elevator", type: 'scenery'},
+            { id: 'dumboAircraft', x: 100, y: 300, width: 120, height: 50, color: 'lightgrey', label: "Dumbo Transport", type: 'vehicle'},
+            { id: 'exitToEOT', x: canvas.width - 80, y: canvas.height - 80, width: 60, height: 60, color: 'blue', label: "Go to EOT Assignment", type: 'transition', targetLevel: 'teskorVillageApproach', interactable: true, requiredObjective:'reachParadise', interactionMessage:"[E] Go to Teskor Assignment", setsObjective: 'setupEOT', unlocks: 'chapter4Complete'}
+        ],
+        entryPoint: { x: canvas.width / 2, y: 150 }
+     },
+     // --- CHAPTER 5: Intel ---
+     teskorVillageApproach: {
+        name: "Approaching Teskor Village",
+        objects: [
+            { id: 'farmland', x: 0, y: 0, width: canvas.width, height: canvas.height, color: 'lightgoldenrodyellow', label: "", type: 'background'}, // Just visual
+            { id: 'road', x: 0, y: canvas.height/2 - 10, width: canvas.width, height: 20, color: 'tan', label: "", type: 'background'},
+            { id: 'villageSign', x: canvas.width - 150, y: canvas.height/2 - 50, width: 100, height: 30, color: 'brown', label: "Teskor Village ->", type: 'transition', targetLevel: 'teskorVillage', interactable: true, requiredObjective: 'chapter4Complete', interactionMessage: "[E] Enter Teskor (Ch. 5)"}
+        ],
+         entryPoint: { x: 50, y: canvas.height / 2 }
+     },
+     teskorVillage: {
+        name: "Teskor Village",
+        objects: [
+             { id: 'lesterCornhutHouse', x: 200, y: 200, width: 100, height: 80, color: 'saddlebrown', label: "Lester Cornhut's House", type: 'building', interactable: true, interactionMessage: "[E] Talk to Lester (Meet Governor?)", setsObjective: 'meetGovernor'},
+             { id: 'eotCommandPost', x: 500, y: 400, width: 120, height: 90, color: 'darkolivegreen', label: "Your Command Post", type: 'building', interactable: true, interactionMessage: "Your temporary home."},
+             { id: 'lesterNPC', x: 250, y: 280, width: 15, height: 15, color: 'gold', label: "Lester Cornhut", type: 'npc'},
+             { id: 'governorNPC', x: 280, y: 280, width: 15, height: 15, color: 'purple', label: "Governor Lohgellia", type: 'npc', visible: false, interactable: true, requiredObjective: 'meetGovernor', interactionMessage:"[E] Talk to Governor", setsObjective:'learnTruth', unlocks: 'chapter5Complete'},
+             { id: 'exitToFields', x: canvas.width - 80, y: canvas.height - 80, width: 60, height: 60, color: 'blue', label: "Go Plant Potatoes", type: 'transition', targetLevel: 'potatoField', interactable: true, requiredObjective: 'chapter5Complete', interactionMessage: "[E] Plant Potatoes (Ch. 8)"}
+        ],
+        entryPoint: { x: 50, y: canvas.height / 2 }
+     },
+      // --- CHAPTER 8: Planting Potatoes ---
+     potatoField: {
+         name: "Potato Field (Paradise)",
+         objects: [
+             { id: 'field', x: 50, y: 50, width: 700, height: 500, color: 'burlywood', label: "Field", type: 'scenery'},
+             { id: 'planterMachine', x: 100, y: 100, width: 80, height: 40, color: 'green', label: "Planting Machine", type: 'interactionPoint', interactable: true, interactionMessage: "[E] Operate Planter", setsObjective: 'plantPotatoes', unlocks: 'chapter8Complete'},
+             { id: 'exitToJail', x: canvas.width - 80, y: canvas.height - 80, width: 60, height: 60, color: 'blue', label: "Events Escalate...", type: 'transition', targetLevel: 'kristangJail', interactable: true, requiredObjective: 'chapter8Complete', interactionMessage: "[E] Trouble Brews... (Ch. 9)", setsObjective: 'getArrested'} // Set arrest objective
+         ],
+         entryPoint: { x: 50, y: canvas.height / 2 }
+     },
+     // --- CHAPTER 9: Jail ---
+     kristangJail: {
+         name: "Kristang Prison Cell",
+         objects: [
+             { id: 'wallLeft', x: canvas.width / 2 - 100, y: canvas.height / 2 - 150, width: 10, height: 300, color: 'grey', label: "Wall", type: 'obstacle'},
+             { id: 'wallRight', x: canvas.width / 2 + 90, y: canvas.height / 2 - 150, width: 10, height: 300, color: 'grey', label: "Wall", type: 'obstacle'},
+             { id: 'wallTop', x: canvas.width / 2 - 100, y: canvas.height / 2 - 150, width: 200, height: 10, color: 'grey', label: "Wall", type: 'obstacle'},
+             { id: 'wallBottom', x: canvas.width / 2 - 100, y: canvas.height / 2 + 140, width: 200, height: 10, color: 'grey', label: "Wall", type: 'obstacle'},
+             // *** Made trigger slightly larger ***
+             { id: 'explosionTrigger', x: canvas.width / 2 - 10, y: canvas.height / 2 - 10, width: 20, height: 20, color: 'black', label: "", type: 'eventTrigger', visible: false, setsObjective: 'hearExplosion', unlocks: 'escapeJail'},
+             { id: 'brokenWall', x: canvas.width / 2 + 90, y: canvas.height / 2 - 50, width: 10, height: 100, color: 'darkgrey', label: "Crack", type: 'transition', targetLevel: 'kristangBaseCorridor', interactable: false, visible: true} // Start visible but not interactable
+         ],
+         entryPoint: { x: canvas.width / 2, y: canvas.height / 2 }
+     },
+     // --- CHAPTER 10: Skippy ---
+     kristangBaseCorridor: {
+         name: "Kristang Base Corridor (Damaged)",
+         objects: [
+             { id: 'rubble1', x: 100, y: 100, width: 80, height: 150, color: 'dimgrey', label: "Rubble", type: 'obstacle'},
+             { id: 'rubble2', x: 500, y: 300, width: 150, height: 90, color: 'dimgrey', label: "Rubble", type: 'obstacle'},
+             { id: 'warehouseDoor', x: canvas.width - 100, y: canvas.height / 2 - 40, width: 20, height: 80, color: 'darkgreen', label: "Warehouse Door", type: 'transition', targetLevel: 'skippyWarehouse', interactable: true, interactionMessage:"[E] Enter Warehouse", setsObjective: 'findSkippy'}
+         ],
+         entryPoint: { x: 50, y: canvas.height / 2 }
+     },
+     skippyWarehouse: {
+         name: "Dusty Warehouse",
+         objects: [
+             { id: 'junkPile1', x: 50, y: 50, width: 200, height: 500, color: 'grey', label: "Junk", type: 'obstacle'}, // Ends x=250
+             { id: 'junkPile2', x: 550, y: 50, width: 200, height: 500, color: 'grey', label: "Junk", type: 'obstacle'}, // Starts x=550
+             { id: 'shelf', x: 380, y: 280, width: 40, height: 150, color: 'brown', label: "Shelf", type: 'scenery'},
+             { id: 'skippyCan', x: 400, y: 300, width: 15, height: 25, color: 'silver', label: "Skippy!", type: 'npc', interactable: true, interactionMessage:"[E] Talk to the Beer Can?!", setsObjective: 'talkToSkippy', pickupItem: 'skippy', unlocks: 'chapter10Complete'},
+             { id: 'exitWithSkippy', x: 10, y: canvas.height / 2 - 40, width: 20, height: 80, color: 'darkgreen', label: "Exit", type: 'transition', targetLevel: 'finalArea', interactable: true, requiredObjective: 'chapter10Complete', interactionMessage:"[E] Escape with Skippy!"}
+         ],
+         // *** ADJUSTED WAREHOUSE ENTRY POINT ***
+         entryPoint: { x: 260, y: canvas.height / 2 } // Start between junk piles (x=260, y=300)
+     },
+      finalArea: {
+         name: "To Be Continued...",
+         objects: [
+             { id: 'endText', x: 100, y: 200, width: 600, height: 100, color: 'black', label: "You escaped with Skippy! The adventure continues... (Game Ends Here for Now)", type: 'scenery'}
+         ],
+         entryPoint: { x: canvas.width / 2, y: canvas.height / 2 }
+     },
+  };
+
+  // Initialize currentObjects safely after levels is defined
+  let currentObjects = levels[currentLevel]?.objects || []; // Use optional chaining and default
+
+  // --- Utility Functions ---
+  function drawRect(x, y, width, height, color) {
+    if (!ctx) return;
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, width, height);
+  }
+
+  // Simple text drawing at specific coordinates
+  function drawSimpleText(text, x, y, color = 'white', size = 12) {
+     if (!ctx) return;
+    ctx.fillStyle = color;
+    ctx.font = `${size}px sans-serif`;
+    ctx.textAlign = 'left'; // Ensure default alignment
+    ctx.fillText(text, x, y);
+  }
+
+   // Draw text centered above an object
+   function drawObjectLabel(obj) {
+        if (!ctx || !obj) return; // Add null check for obj
+        const w = obj.width ?? DEFAULT_W;
+        // const h = obj.height ?? DEFAULT_H; // h not needed for label y-pos
+        if (obj.label && obj.visible !== false) {
+            ctx.fillStyle = 'white';
+            ctx.font = `${LABEL_FONT_SIZE}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText(obj.label, obj.x + w / 2, obj.y + LABEL_OFFSET_Y);
+            ctx.textAlign = 'left'; // Reset alignment
+        }
+   }
+
+   // Draw player label centered above player
+   function drawPlayerLabel(p) {
+        if (!ctx || !p) return; // Add null check for p
+        ctx.fillStyle = 'lightblue';
+        ctx.font = `${LABEL_FONT_SIZE}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(p.label, p.x + p.width / 2, p.y + LABEL_OFFSET_Y);
+        ctx.textAlign = 'left'; // Reset alignment
+   }
+
+  function drawCircle(x, y, radius, color) {
+        if (!ctx) return;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2, false);
+        ctx.fill();
+    }
+
+  function checkCollision(rect1, rect2) {
+    if (!rect1 || !rect2) return false; // Prevent errors if objects are invalid
+    const r1w = rect1.width ?? 0;
+    const r1h = rect1.height ?? 0;
+    const r2w = rect2.width ?? 0;
+    const r2h = rect2.height ?? 0;
+    // Basic AABB collision detection
+    // Check for non-overlapping conditions first for clarity
+    if (rect1.x + r1w <= rect2.x || // rect1 is entirely to the left of rect2
+        rect1.x >= rect2.x + r2w || // rect1 is entirely to the right of rect2
+        rect1.y + r1h <= rect2.y || // rect1 is entirely above rect2
+        rect1.y >= rect2.y + r2h) { // rect1 is entirely below rect2
+        return false;
+    }
+    // If none of the non-overlapping conditions are met, they must be colliding
+    return true;
+  }
+
+
+   function distance(x1, y1, x2, y2) {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+
+  function displayMessage(msg, duration = 3000) {
+    if (!messageDiv) return; // Check if messageDiv exists
+    messageDiv.innerText = msg;
+    if (duration > 0) {
+        const currentMsg = msg;
+        setTimeout(() => {
+            // Check messageDiv again in case it becomes invalid later
+            if (messageDiv && messageDiv.innerText === currentMsg) {
+                 messageDiv.innerText = '';
+            }
+        }, duration);
+    }
+  }
+
+  // *** UPDATED OBJECTIVE DISPLAY LOGIC ***
+  function updateObjectiveDisplay() {
+      if (!objectiveDiv) return; // Check if objectiveDiv exists
+      let currentObjectiveText = "Objective unclear."; // Default if no other condition met
+
+        // Determine objective based on state and level, roughly reverse order of completion
+        if (objectives.chapter10Complete) currentObjectiveText = "Escape with Skippy! (Game End)";
+        else if (objectives.talkToSkippy) currentObjectiveText = "Escape the base with Skippy.";
+        else if (objectives.findSkippy) currentObjectiveText = "Investigate the warehouse.";
+        else if (objectives.escapeJail) currentObjectiveText = "Escape the Kristang prison!";
+        else if (objectives.hearExplosion) currentObjectiveText = "Find a way out of the cell!";
+        else if (objectives.inKristangJail) currentObjectiveText = "Survive Kristang jail.";
+        else if (objectives.getArrested) currentObjectiveText = "You've been arrested by Kristang forces!";
+        else if (objectives.chapter8Complete) currentObjectiveText = "Trouble is brewing... (Go towards event trigger)";
+        else if (objectives.plantPotatoes) currentObjectiveText = "Wait for the next assignment (Explore fields).";
+        else if (objectives.chapter5Complete) currentObjectiveText = "Plant potatoes in the assigned field.";
+        else if (objectives.learnTruth) currentObjectiveText = "Report intel back to Command Post.";
+        else if (objectives.meetGovernor) currentObjectiveText = "Talk to the Ruhar Governor.";
+        else if (objectives.chapter4Complete) currentObjectiveText = "Meet the locals in Teskor Village.";
+        else if (objectives.setupEOT) currentObjectiveText = "Reach Teskor Village.";
+        else if (objectives.chapter3Complete) currentObjectiveText = "Deploy to Paradise.";
+        else if (objectives.useZinger) currentObjectiveText = "Complete Zinger training.";
+        else if (objectives.getWeaponM4B1) currentObjectiveText = "Practice with the Zinger missile.";
+        else if (objectives.reachCampAlpha) currentObjectiveText = "Get your M4B1 weapon.";
+        else if (objectives.chapter2Complete) currentObjectiveText = "Reach Camp Alpha.";
+        else if (objectives.boardTransport) currentObjectiveText = "Survive the trip to Camp Alpha.";
+        else if (objectives.rideElevator) currentObjectiveText = "Board the Kristang Transport ship.";
+        // *** UPDATED: Check for goToEcuador objective ***
+        else if (objectives.goToEcuador && !objectives.rideElevator) currentObjectiveText = "Board the Space Elevator.";
+        else if (objectives.chapter1Complete && !objectives.goToEcuador) currentObjectiveText = "Deploy to Ecuador."; // Should be set when leaving barn
+        // --- End Update ---
+        else if (objectives.stashedRuhar) currentObjectiveText = "Wait for the military / Leave area.";
+        else if (objectives.captureRuhar) currentObjectiveText = "Get the captured Ruhar to Tom Paulson's barn!";
+        // --- Corrected Dynamite / Trap Logic ---
+        else if (objectives.getDynamite && !objectives.captureRuhar && currentLevel === 'thompsonCorners') currentObjectiveText = "Set the dynamite trap in the Diner Alley.";
+        else if (objectives.getDynamite && !objectives.enteredFireRoad && currentLevel === 'roadToTown') currentObjectiveText = "Go to the Fire Road Entrance.";
+        else if (objectives.getDynamite && objectives.enteredFireRoad && currentLevel === 'fireRoad') currentObjectiveText = "Go to Thompson Corners.";
+        // --- End Corrected Logic ---
+        else if (objectives.findDynamite && !objectives.getDynamite) currentObjectiveText = "Get the Dynamite from the Quarry shed.";
+        else if (objectives.reachTownBlocked && !objectives.findDynamite) currentObjectiveText = "Find dynamite at the quarry.";
+        else if (objectives.getInTruck && !objectives.reachTownBlocked) currentObjectiveText = "Drive towards town. Look out for trouble!";
+        else if (!objectives.getInTruck) currentObjectiveText = "Get to your truck."; // Initial objective
+
+      updateObjective(currentObjectiveText);
+  }
+
+
+  function updateObjective(text) {
+       if (!objectiveDiv) return; // Check if objectiveDiv exists
+      objectiveDiv.innerText = "Objective: " + text;
+  }
+
+  // --- Game Logic ---
+  function update() {
+    // console.log("Update loop running..."); // Keep commented unless debugging loop itself
+    try {
+        let dx = 0;
+        let dy = 0;
+
+        // --- MOVEMENT INPUT: ARROW KEYS ONLY ---
+        if (keys['arrowleft']) dx -= PLAYER_SPEED;
+        if (keys['arrowright']) dx += PLAYER_SPEED;
+        if (keys['arrowup']) dy -= PLAYER_SPEED;
+        if (keys['arrowdown']) dy += PLAYER_SPEED;
+
+        // --- Simplified Movement & Collision ---
+        let targetX = player.x + dx;
+        let targetY = player.y + dy;
+
+        // Check future X position
+        let canMoveX = true;
+        const futurePlayerX = { ...player, x: targetX }; // Represents player's bounding box at the target X
+        if (targetX < 0 || targetX + player.width > canvas.width) {
+            canMoveX = false;
+        } else if (currentObjects && Array.isArray(currentObjects)) {
+            for (const obj of currentObjects) {
+                if (!obj) continue;
+                const objW = obj.width ?? DEFAULT_W;
+                const objH = obj.height ?? DEFAULT_H;
+                // *** COLLISION FIX: Ignore 'scenery' type ***
+                if (obj.visible !== false && (obj.type === 'obstacle' || obj.type === 'building' || obj.type === 'npc' || obj.type === 'vehicle')) { // REMOVED 'scenery'
+                    if (checkCollision(futurePlayerX, { ...obj, width: objW, height: objH })) {
+                        canMoveX = false;
+                        break; // Stop checking X collision once one is found
+                    }
+                }
+            }
+        }
+
+        // Check future Y position
+        let canMoveY = true;
+        const futurePlayerY = { ...player, y: targetY }; // Represents player's bounding box at the target Y
+         if (targetY < 0 || targetY + player.height > canvas.height) {
+            canMoveY = false;
+        } else if (currentObjects && Array.isArray(currentObjects)) {
+            for (const obj of currentObjects) {
+                 if (!obj) continue;
+                 const objW = obj.width ?? DEFAULT_W;
+                 const objH = obj.height ?? DEFAULT_H;
+                 // *** COLLISION FIX: Ignore 'scenery' type ***
+                if (obj.visible !== false && (obj.type === 'obstacle' || obj.type === 'building' || obj.type === 'npc' || obj.type === 'vehicle')) { // REMOVED 'scenery'
+                    if (checkCollision(futurePlayerY, { ...obj, width: objW, height: objH })) {
+                        canMoveY = false;
+                        break; // Stop checking Y collision once one is found
+                    }
+                }
+            }
+        }
+
+        // Apply movement ONLY if the path is clear for that axis
+        if (canMoveX) {
+            player.x = targetX;
+        }
+        if (canMoveY) {
+            player.y = targetY;
+        }
+
+        // --- Interaction Check ---
+        let nearInteractable = false;
+        let interactionTarget = null;
+        let minDist = INTERACT_DISTANCE + 1;
+
+        if (currentObjects && Array.isArray(currentObjects)) {
+            currentObjects.forEach(obj => {
+                 if (!obj) return;
+                 const objW = obj.width ?? DEFAULT_W;
+                 const objH = obj.height ?? DEFAULT_H;
+
+                if (obj.visible !== false && obj.interactable) {
+                     const dist = distance(player.x + player.width / 2, player.y + player.height / 2, obj.x + objW / 2, obj.y + objH / 2);
+                     if (dist < INTERACT_DISTANCE) {
+                         let requirementMet = !obj.requiredObjective || objectives[obj.requiredObjective];
+                         let itemRequirementMet = !obj.requiresItem || player.inventory[obj.requiresItem];
+
+                         // *** DEBUG LOG for ExitToParadise ***
+                         if (obj.id === 'exitToParadise') {
+                             console.log(`Near ExitToParadise: Distance=${dist.toFixed(1)}, ReqMet=${requirementMet} (chapter3Complete=${objectives.chapter3Complete})`);
+                         }
+
+
+                         if (requirementMet && itemRequirementMet) {
+                             if (dist < minDist) {
+                                 minDist = dist;
+                                 interactionTarget = obj;
+                             }
+                             nearInteractable = true;
+                         } else if (!interactionTarget && !nearInteractable) {
+                              if (!requirementMet) {
+                                  // Display unmet objective message only if near this specific object
+                                  displayMessage(`Requires: ${getFriendlyObjectiveName(obj.requiredObjective)}`, 0);
+                                  nearInteractable = true;
+                             } else if (!itemRequirementMet) {
+                                  displayMessage(`Requires item: ${obj.requiresItem}`, 0);
+                                  nearInteractable = true;
+                             }
+                         }
+                     }
+                } else if (obj.visible !== false && obj.type === 'eventTrigger') {
+                    // Event triggers are handled in level-specific logic below now
+                }
+            });
+        } else {
+             console.error("currentObjects is not a valid array in interaction check!");
+             return;
+        }
+
+         // Display interaction message for closest valid target
+         if (interactionTarget) {
+            displayMessage(interactionTarget.interactionMessage, 0);
+             if (keys['e']) {
+                 // console.log('Attempting interaction with:', interactionTarget.id); // Keep commented unless debugging interaction
+                 handleInteraction(interactionTarget);
+                 keys['e'] = false; // Consume interaction key press
+             }
+         } else if (!nearInteractable) {
+            if (messageDiv && messageDiv.innerText !== '') { // Check messageDiv exists
+                 displayMessage('', 1);
+            }
+        }
+
+
+        // --- Update NPC Positions ---
+         if (currentObjects && Array.isArray(currentObjects)) {
+            currentObjects.forEach(obj => {
+                 if (!obj || obj.type !== 'npc') return; // Skip non-NPCs
+                 const objW = obj.width ?? DEFAULT_W;
+                 const objH = obj.height ?? DEFAULT_H;
+
+                if (obj.label === "Ruhar" && Math.random() < 0.01) { // Simple random movement
+                    let moveX = (Math.random() - 0.5) * 10;
+                    let moveY = (Math.random() - 0.5) * 10;
+                    let nextNpcX = obj.x + moveX;
+                    let nextNpcY = obj.y + moveY;
+                    let blocked = false;
+
+                    // Basic check against player and boundaries
+                    if (checkCollision({x:nextNpcX, y:nextNpcY, width:objW, height:objH}, player) ||
+                        nextNpcX < 0 || nextNpcX + objW > canvas.width ||
+                        nextNpcY < 0 || nextNpcY + objH > canvas.height) {
+                        blocked = true;
+                    }
+
+                    // Basic check against other solid objects
+                    if (!blocked) {
+                        for (const otherObj of currentObjects) {
+                            if(!otherObj || obj.id === otherObj.id) continue; // Skip self and invalid objects
+                            const otherW = otherObj.width ?? DEFAULT_W;
+                            const otherH = otherObj.height ?? DEFAULT_H;
+                            // *** COLLISION FIX: Ignore 'scenery' type ***
+                            if(otherObj.visible !== false && (otherObj.type === 'obstacle' || otherObj.type === 'building')) { // REMOVED 'scenery' from NPC collision check too
+                                if(checkCollision({x:nextNpcX, y:nextNpcY, width:objW, height:objH}, {...otherObj, width: otherW, height: otherH})) {
+                                    blocked = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if(!blocked) {
+                        obj.x = nextNpcX;
+                        obj.y = nextNpcY;
+                    }
+                }
+            });
+         } else {
+             console.error("currentObjects is not a valid array in NPC update!");
+             return;
+         }
+
+
+         // --- Specific Level Logic ---
+         // *** JAIL EXIT FIX: Trigger explosion automatically if not already heard ***
+         if (currentLevel === 'kristangJail' && !objectives.hearExplosion) {
+             const trigger = currentObjects.find(o => o && o.id === 'explosionTrigger');
+             if (trigger) {
+                 // console.log("Auto-triggering jail explosion event."); // Keep commented unless debugging jail
+                 handleInteraction(trigger); // Trigger the event
+                 trigger.interactable = false; // Disable it
+                 trigger.visible = false;
+             }
+             // Now make the wall interactable immediately after triggering
+             const brokenWall = currentObjects.find(o => o && o.id === 'brokenWall');
+             if (brokenWall && !brokenWall.interactable) {
+                 // console.log("Making brokenWall interactable."); // Keep commented unless debugging jail
+                 brokenWall.interactable = true;
+                 brokenWall.color = 'darkred';
+                 brokenWall.label = "Escape!";
+             }
+         }
+         // Governor visibility check
+          if (currentLevel === 'teskorVillage' && objectives.meetGovernor) {
+               const governor = currentObjects.find(o => o && o.id === 'governorNPC');
+               if (governor && !governor.visible) {
+                   governor.visible = true;
+               }
+          }
+    } catch (error) {
+        console.error("Error in update function:", error);
+        // displayMessage("An error occurred in the game logic.", 5000);
+    }
+
+  }
+
+  function handleInteraction(obj) {
+      if (!obj) {
+          console.error("handleInteraction called with invalid object");
+          return;
+      }
+      // console.log("Handling interaction for:", obj.id); // Keep commented unless debugging interaction
+
+      // Set objective if defined for this interaction
+      if (obj.setsObjective && !objectives[obj.setsObjective]) {
+          objectives[obj.setsObjective] = true;
+          // console.log("Objective set:", obj.setsObjective);
+          displayMessage(`${obj.label}: Objective set - ${obj.setsObjective}`, 2000);
+      } else {
+          // Display interaction message even if objective already set, unless it's a pickup
+          if (obj.type !== 'item' || !player.inventory[obj.pickupItem]) {
+            displayMessage(`Interacted with ${obj.label}`, 2000);
+          }
+      }
+
+       // Unlock objective if defined
+       if (obj.unlocks && !objectives[obj.unlocks]) {
+          objectives[obj.unlocks] = true;
+          // console.log("Objective unlocked:", obj.unlocks);
+      }
+
+      // Handle item pickup
+      if (obj.type === 'item' && obj.pickupItem) {
+          if (!player.inventory[obj.pickupItem]) {
+              player.inventory[obj.pickupItem] = true;
+              displayMessage(`Picked up ${obj.label}!`, 2000);
+              obj.interactable = false;
+              obj.color = 'grey';
+              obj.label = `(${obj.label} Taken)`;
+              console.log("Inventory:", player.inventory);
+          } else {
+              displayMessage(`Already have ${obj.label}.`, 1500); // Feedback if already picked up
+          }
+      }
+
+       // Handle level transition
+      if (obj.targetLevel) { // If it has a targetLevel, try to transition
+          let requirementMet = !obj.requiredObjective || objectives[obj.requiredObjective];
+          let itemRequirementMet = !obj.requiresItem || player.inventory[obj.requiresItem];
+
+          // *** DEBUG LOG for ExitToParadise ***
+          if (obj.id === 'exitToParadise') {
+              console.log(`Handling ExitToParadise: ReqMet=${requirementMet} (chapter3Complete=${objectives.chapter3Complete})`);
+          }
+
+          if (requirementMet && itemRequirementMet) {
+                // console.log('Requirements met for transition.');
+                if (obj.requiresItem && obj.id !== 'fireRoadEntry') {
+                    player.inventory[obj.requiresItem] = false;
+                    console.log(`Used item: ${obj.requiresItem}`);
+                    displayMessage(`Used ${obj.requiresItem}!`, 1500);
+                }
+                changeLevel(obj.targetLevel); // Call changeLevel
+          } else {
+              // console.log(`Transition requirements NOT met for ${obj.id}.`);
+              // Requirement message displayed by update loop
+          }
+      } else {
+          // console.log(`Object ${obj.id} does not have targetLevel.`);
+      }
+
+
+       // --- Specific Interaction Logic ---
+       // (Moved most logic to object properties)
+       if (obj.id === 'lesterCornhutHouse' && currentLevel === 'teskorVillage' && !objectives.meetGovernor) {
+            // objectives.meetGovernor = true; // Set by object property now
+            const governor = currentObjects.find(o => o && o.id === 'governorNPC');
+            if (governor) governor.visible = true;
+            displayMessage("Lester introduces you to Governor Lohgellia.", 3000);
+       } else if (obj.id === 'governorNPC' && currentLevel === 'teskorVillage') {
+             displayMessage("Governor: The Kristang lied to you...", 4000);
+             // objectives.learnTruth = true; // Set by object property
+             // objectives.chapter5Complete = true; // Set by object property
+       } else if (obj.id === 'skippyCan' && currentLevel === 'skippyWarehouse') {
+           if (!player.inventory.skippy) {
+               displayMessage("Skippy: Excellent! You can carry me!", 5000);
+               // Pickup handled by item logic now
+           } else {
+               displayMessage("Skippy: Took you long enough, monkey.", 2000);
+           }
+       } else if (obj.id === 'explosionTrigger' && currentLevel === 'kristangJail') {
+            // This specific logic block might be redundant now due to the auto-trigger in update()
+            // but it doesn't hurt to leave it as a backup.
+            displayMessage("BOOM! An explosion rocks the base!", 3000);
+            const brokenWall = currentObjects.find(o => o && o.id === 'brokenWall');
+            if (brokenWall) {
+                brokenWall.interactable = true;
+                brokenWall.color = 'darkred';
+                brokenWall.label = "Escape!";
+            }
+       }
+
+      updateObjectiveDisplay();
+  }
+
+   function changeLevel(levelId) {
+        // console.log('changeLevel called with:', levelId); // Keep commented unless debugging levels
+        if (levels[levelId]) {
+            currentLevel = levelId;
+            // Ensure objects for the new level exist and are an array
+            if (levels[currentLevel].objects && Array.isArray(levels[currentLevel].objects)) {
+                currentObjects = levels[currentLevel].objects;
+                 // Reset visibility of dynamic objects when entering a level
+                 if (levelId === 'roadToTown') {
+                     const transport = currentObjects.find(o => o.id === 'crashedTransport');
+                     if (transport) {
+                         // Ensure transport visibility is set correctly based on whether player has been in truck
+                         transport.visible = objectives.getInTruck;
+                     }
+                 } else if (levelId === 'teskorVillage') {
+                     const governor = currentObjects.find(o => o.id === 'governorNPC');
+                     if (governor) {
+                         governor.visible = objectives.meetGovernor; // Only visible if objective met
+                     }
+                 } else if (levelId === 'kristangJail') {
+                      const brokenWall = currentObjects.find(o => o.id === 'brokenWall');
+                      if (brokenWall) {
+                            // Reset wall state based on whether explosion has happened *before* this level load
+                            brokenWall.interactable = objectives.hearExplosion;
+                            brokenWall.color = objectives.hearExplosion ? 'darkred' : 'darkgrey';
+                            brokenWall.label = objectives.hearExplosion ? 'Escape!' : 'Crack';
+                      }
+                 }
+            } else {
+                console.error(`Objects for level ${levelId} are missing or invalid!`);
+                currentObjects = []; // Default to empty array to prevent errors
+            }
+            // Ensure entry point exists
+            if (levels[currentLevel].entryPoint) {
+                player.x = levels[currentLevel].entryPoint.x;
+                player.y = levels[currentLevel].entryPoint.y;
+            } else {
+                 console.error(`Entry point for level ${levelId} is missing! Defaulting position.`);
+                 player.x = canvas.width / 2; // Default position
+                 player.y = canvas.height / 2;
+            }
+            // console.log(`Level changed successfully to ${currentLevel}.`);
+            updateObjectiveDisplay();
+            keys['e'] = false; // Reset interaction key state on level change
+        } else {
+            console.error(`Level ${levelId} not found!`);
+            // Stay in current level
+            currentLevel = currentLevel;
+            // Ensure currentObjects remains valid if level change fails
+            currentObjects = levels[currentLevel]?.objects || [];
+        }
+    }
+
+    // Helper function for clearer requirement messages (optional)
+    function getFriendlyObjectiveName(objKey) {
+        // Simple mapping for better messages if needed
+        const names = {
+            'captureRuhar': 'Capture Ruhar objective',
+            'getWeaponM4B1': 'Get M4B1 objective',
+            'chapter1Complete': 'Chapter 1 complete',
+            'chapter2Complete': 'Chapter 2 complete',
+            'chapter3Complete': 'Chapter 3 complete',
+            'chapter4Complete': 'Chapter 4 complete',
+            'chapter5Complete': 'Chapter 5 complete',
+            'chapter8Complete': 'Chapter 8 complete',
+            'chapter10Complete': 'Chapter 10 complete',
+            'meetGovernor': 'Meet Governor objective',
+            'hearExplosion': 'Explosion objective',
+            'goToEcuador': 'Go to Ecuador objective' // Added for elevator
+            // Add more as needed
+        };
+        return names[objKey] || objKey; // Return mapped name or original key
+    }
+
+  function draw() {
+    // console.log("Draw loop running..."); // Keep commented unless debugging loop itself
+     try { // Wrap draw logic in try...catch
+        // Clear canvas
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw Level Name - Centered
+        if (levels[currentLevel] && levels[currentLevel].name) {
+             ctx.fillStyle = 'yellow';
+             ctx.font = `16px sans-serif`;
+             ctx.textAlign = 'center';
+             ctx.fillText(levels[currentLevel].name, canvas.width / 2, 20);
+             ctx.textAlign = 'left'; // Reset alignment
+        }
+
+
+        // Draw objects
+        if (currentObjects && Array.isArray(currentObjects)) {
+            // Draw background elements first
+            currentObjects.forEach(obj => {
+                 if (!obj) return;
+                 const objW = obj.width ?? DEFAULT_W;
+                 const objH = obj.height ?? DEFAULT_H;
+                 if (obj.visible !== false && obj.type === 'background') {
+                      drawRect(obj.x, obj.y, objW, objH, obj.color);
+                      // Don't draw label for background
+                 }
+            });
+            // Draw other elements on top
+            currentObjects.forEach(obj => {
+                 if (!obj) return;
+                 const objW = obj.width ?? DEFAULT_W;
+                 const objH = obj.height ?? DEFAULT_H;
+
+                if (obj.visible !== false && obj.type !== 'background') { // Exclude background here
+                    if (obj.type === 'npc') {
+                        drawCircle(obj.x + objW/2, obj.y + objH/2, objW/2, obj.color);
+                    } else if (obj.id === 'elevatorBeam') {
+                        ctx.fillStyle = obj.color;
+                        ctx.globalAlpha = 0.7;
+                        ctx.fillRect(obj.x, obj.y, objW, objH);
+                        for(let i=0; i< 10; i++) {
+                            let sparkX = obj.x + Math.random() * objW;
+                            let sparkY = obj.y + Math.random() * objH;
+                            drawCircle(sparkX, sparkY, Math.random() * 2 + 1, 'white');
+                        }
+                        ctx.globalAlpha = 1.0;
+                    } else { // Default draw rectangle
+                        drawRect(obj.x, obj.y, objW, objH, obj.color);
+                    }
+                    // Draw label
+                    drawObjectLabel({ ...obj, width: objW, height: objH });
+                }
+            });
+        } else {
+             console.error("currentObjects is not a valid array in draw!");
+             return; // Stop drawing if objects are invalid
+        }
+
+
+        // Draw Player
+        drawRect(player.x, player.y, player.width, player.height, player.color);
+        drawPlayerLabel(player);
+     } catch (error) {
+          console.error("Error in draw function:", error);
+     }
+  }
+
+  // --- Game Loop ---
+  let animationFrameId = null; // To potentially stop the loop if needed
+  function gameLoop() {
+    update(); // Update game state
+    draw();   // Draw the current state
+    animationFrameId = requestAnimationFrame(gameLoop); // Request the next frame
+  }
+
+  // --- Event Listeners ---
+   window.addEventListener('keydown', (e) => {
+        const key = e.key.toLowerCase();
+        // console.log('Key Down:', key, ' | Current keys state:', JSON.stringify(keys)); // Keep commented unless debugging keys
+        keys[key] = true;
+        // Only prevent default for arrow keys and space
+        if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(key)) {
+            e.preventDefault();
+        }
+        // Interaction key 'e' handling (not used for movement in this test)
+        if (key === 'e') {
+             keys['e'] = true;
+         }
+    });
+
+    window.addEventListener('keyup', (e) => {
+        const key = e.key.toLowerCase();
+        // console.log('Key Up:', key, ' | Current keys state:', JSON.stringify(keys)); // Keep commented unless debugging keys
+        keys[key] = false;
+         // Interaction key 'e' handling
+         if (key === 'e') {
+             keys['e'] = false;
+         }
+    });
+
+
+  // --- Start Game ---
+  try {
+      console.log("Attempting to start game...");
+      // Make sure the crashed transport starts invisible
+      const transport = levels?.roadToTown?.objects?.find(o => o.id === 'crashedTransport');
+      if (transport) transport.visible = false;
+
+      displayMessage("Game Loaded. Find the pickup truck.", 3000);
+      updateObjectiveDisplay();
+      gameLoop(); // Start the main game loop
+      console.log("Game loop started.");
+  } catch (error) {
+       console.error("Error starting game loop:", error);
+       alert("Failed to start the game. Check the console (F12) for errors.");
+  }
+
+</script>
+
+</body>
+</html>
+
